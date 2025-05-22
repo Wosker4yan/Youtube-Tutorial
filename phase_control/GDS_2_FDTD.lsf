@@ -1,0 +1,135 @@
+# DC_GDS_import.lsf - Script to import GDS for 3D FDTD simulations in Lumerical Solutions
+
+newproject;
+material;
+filename = "xxx.gds";   	
+cellname = "topcell";
+
+Material_Clad = "CLADDING";
+Material_Ox  = "TOX";
+Material_Al   = "Aluminium oxide";
+#materials;     # run script to add materials
+
+Thickness_Al =0.1e-6;	Etch2=130e-9;
+clad_thick = 8e-6;
+FDTD_above=600e-9;	# Extra simulation volume added
+FDTD_below=600e-9;S
+
+minvxWAFER=1e9; minvyWAFER=1e9; 
+maxvxWAFER=-1e9; maxvyWAFER=-1e9;  # design extent
+maxvzWAFER=thickness_Al;
+
+# Waveguide     Si 220nm    
+n = gdsimport(filename, cellname, 66, material_Al, 0, thickness_Al);
+if (n==0){ delete;} 
+else {
+          groupscope("::model::GDS_LAYER_66:0");	
+	set("script","");
+	selectall;
+	set('material', Material_Ox);
+	set('z span',Thickness_Al); 	 set('z',0);
+	selectpartial('poly');
+	minvx=1e9; minvy=1e9; maxvx=-1e9; maxvy=-1e9;
+	for (i=1:getnumber) {	# find the extent of this GDS layer.
+		v=get('vertices',i);	  a=size(v);
+		minvx = min ( [minvx, min( v(1:a(1), 1 ))]);
+                    minvy = min ( [minvy, min( v(1:a(1), 2 ))]);
+		maxvx = max ( [maxvx, max( v(1:a(1), 1 ))]);
+		maxvy = max ( [maxvy, max( v(1:a(1), 2 ))]);
+	}
+	minvxWAFER = min ( [minvx, minvxWAFER]);	# save design extent
+	minvyWAFER = min ( [minvy-2.25e-6, minvyWAFER]);
+	maxvxWAFER = max ( [maxvx, maxvxWAFER]);
+	maxvyWAFER = max ( [maxvy+2.25e-6, maxvyWAFER]);
+          groupscope("::model");
+    
+}
+
+
+
+addrect; set("name", "Box");  # Buried Oxide
+set("x min", minvxWAFER); set("y min", minvyWAFER);
+set("x max", maxvxWAFER); set("y max", maxvyWAFER);
+set("z min", -2e-6);	 set("z max", 0);
+set("material", Material_Ox);	 set("alpha",0.2);
+set("override mesh order from material database", 1);
+set("mesh order", 4);
+
+addrect; set("name", "Cladding");   # Cladding 
+set("x min", minvxWAFER); set("y min", minvyWAFER);
+#set("x max", maxvxWAFER); set("y max", maxvyWAFER);
+set("z min", 0);	 set("z max", Thickness_Al);
+set("material", material_Al);	 set("alpha",0.1);
+set("override mesh order from material database", 1);
+set("mesh order", 3);	# make the cladding the background
+
+
+
+
+
+addrect; set("name", "Cladding");   # Cladding 
+set("x min", minvxWAFER); set("y min", minvyWAFER);
+set("x max", maxvxWAFER); set("y max", maxvyWAFER);
+set("z min", 0);	 set("z max", Thickness_Al+clad_thick );
+set("material", Material_Clad);	 set("alpha",0.1);
+set("override mesh order from material database", 1);
+set("mesh order", 4);	# make the cladding the background
+
+addfdtd;  # FDTD simulation volume
+set("x min", minvxWAFER+2e-6); set("y min", minvyWAFER+6.8e-6);
+set("x max", maxvxWAFER-2e-6); set("y max", maxvyWAFER-6.8e-6);
+set("z min", -FDTD_below);	 set("z max", maxvzWAFER+FDTD_above+1e-6);
+set("mesh accuracy", 3);
+set("x min bc", "PML"); set("x max bc", "PML");
+set("y min bc", "PML"); set("y max bc", "PML");
+set("z min bc", "PML"); set("z max bc", "PML");
+
+addmesh;  # mesh override in the coupler gap.
+set("x min", minvxWAFER+9e-6); set("y min", -100e-9);
+set("x max", maxvxWAFER-9e-6); set("y max", 100e-9);
+set("z min", 0);      set("z max", thickness_Al);                  
+set("override y mesh",1); set("override z mesh",0); set("override x mesh",0);
+set("set equivalent index",1);	
+
+
+setglobalsource("wavelength start",1500e-9);  
+setglobalsource("wavelength stop",1600e-9);
+setglobalmonitor("use source limits",1); 
+setglobalmonitor("frequency points",30);
+
+
+# add mode source:
+addmode; set("name", "source");
+set("injection axis", "x-axis"); 
+set("direction", "forward");
+set("y", 1e-6); set("y span", 0.75e-6); 
+set("x", 2.3e-6);
+set("z min", -FDTD_below); set("z max", maxvzWAFER+FDTD_above);
+updatesourcemode;
+
+addpower;
+set("name", "cross"); 
+set("monitor type", "2D X-normal"); 
+set("y", -1e-6); set("y span", 1.4e-6); 
+set("x", 2.3e-6+30e-6);
+set("z min", -FDTD_below); set("z max", maxvzWAFER+FDTD_above);
+
+addpower;
+set("name", "through"); 
+set("monitor type", "2D X-normal"); 
+set("y", 1e-6); set("y span", 1.4e-6); 
+set("x", 2.3e-6+30e-6);
+set("z min", -FDTD_below); set("z max", maxvzWAFER+FDTD_above);
+save('SiphotDC');
+run;
+T_cross = getresult("cross","T");
+T_through = getresult("through","T");
+through_T = T_cross.T;
+cross_T = T_through.T;
+
+LAMBDA = T_through.lambda;
+
+
+
+
+matlabsave('cladding150nm');
